@@ -1,0 +1,5 @@
+Containerfile
+go.mod
+*.go
+Makefile
+questions/a*.md

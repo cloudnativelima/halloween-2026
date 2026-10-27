@@ -1,0 +1,259 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: haunted-loop
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haunted-runtime
+  namespace: haunted-loop
+data:
+  WARMUP_SECONDS: '37'
+  LISTENER_SECONDS: '4'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haunted-phases
+  namespace: haunted-loop
+data:
+  PHASE_LISTENER: HTTP listener active
+  PHASE_BOOTSTRAP: bootstrap in progress
+  PHASE_INITIALIZED: application initialized
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haunted-shadow-clock
+  namespace: haunted-loop
+data:
+  WARMUP_SECONDS: '61'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haunted-loop
+  namespace: haunted-loop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: haunted-loop
+  template:
+    metadata:
+      labels:
+        app: haunted-loop
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 1
+      initContainers:
+      - name: ghost-sentinel
+        image: registry.k8s.io/pause:3.10
+        imagePullPolicy: IfNotPresent
+        restartPolicy: Always
+        readinessProbe:
+          httpGet:
+            path: /darkness
+            port: 8080
+          periodSeconds: 3
+          failureThreshold: 2
+        resources:
+          requests:
+            cpu: 1m
+            memory: 4Mi
+          limits:
+            cpu: 25m
+            memory: 16Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      containers:
+      - name: haunted-loop
+        image: ghcr.io/cloudnativelima/kubectl-exorcise-2026:v1
+        imagePullPolicy: IfNotPresent
+        args:
+        - haunted-loop
+        envFrom:
+        - configMapRef:
+            name: haunted-runtime
+        - configMapRef:
+            name: haunted-phases
+        - configMapRef:
+            name: haunted-shadow-clock
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: light
+          containerPort: 8181
+        resources:
+          requests:
+            cpu: 25m
+            memory: 48Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 2
+          failureThreshold: 12
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          periodSeconds: 2
+          failureThreshold: 1
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          periodSeconds: 2
+          failureThreshold: 2
+      readinessGates:
+      - conditionType: exorcise.io/lantern-lit
+  minReadySeconds: 8
+  progressDeadlineSeconds: 25
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: haunted-loop
+  namespace: haunted-loop
+spec:
+  type: ClusterIP
+  selector:
+    app: haunted-loop
+    route: lantern
+  ports:
+  - name: http
+    port: 80
+    targetPort: light
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backoff-watcher
+  namespace: haunted-loop
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: loop-inspector
+  namespace: haunted-loop
+rules:
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  resourceNames:
+  - haunted-loop
+  - backoff-watcher
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - services
+  resourceNames:
+  - haunted-loop
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - configmaps
+  resourceNames:
+  - haunted-runtime
+  - haunted-phases
+  - haunted-shadow-clock
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  verbs:
+  - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: loop-inspector
+  namespace: haunted-loop
+subjects:
+- kind: ServiceAccount
+  name: backoff-watcher
+  namespace: haunted-loop
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: loop-inspector
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backoff-watcher
+  namespace: haunted-loop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backoff-watcher
+  template:
+    metadata:
+      labels:
+        app: backoff-watcher
+    spec:
+      serviceAccountName: backoff-watcher
+      containers:
+      - name: backoff-watcher
+        image: ghcr.io/cloudnativelima/kubectl-exorcise-2026:v1
+        imagePullPolicy: IfNotPresent
+        args:
+        - backoff-watcher
+        ports:
+        - name: health
+          containerPort: 8081
+        resources:
+          requests:
+            cpu: 25m
+            memory: 48Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          periodSeconds: 5

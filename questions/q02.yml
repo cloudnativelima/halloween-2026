@@ -1,0 +1,323 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cursed-endpoints
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seal-contract
+  namespace: cursed-endpoints
+data:
+  BUSINESS_STATUS: complete
+  BUSINESS_SEALED: 'true'
+  DIAGNOSTIC_STATUS: diagnostic
+  DIAGNOSTIC_SEALED: 'false'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seal-legacy-profile
+  namespace: cursed-endpoints
+data:
+  BUSINESS_STATUS: diagnostic
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spectral-stable
+  namespace: cursed-endpoints
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spectral-backend
+      track: stable
+  template:
+    metadata:
+      labels:
+        app: spectral-backend
+        track: stable
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: backend
+        image: ghcr.io/cloudnativelima/kubectl-exorcise-2026:v1
+        imagePullPolicy: IfNotPresent
+        args:
+        - cursed-endpoints
+        env:
+        - name: BACKEND_TRACK
+          value: stable
+        - name: BUSINESS_STATUS
+          value: $(CONTRACT_STATUS)
+        - name: CONTRACT_STATUS
+          value: complete
+        envFrom:
+        - configMapRef:
+            name: seal-contract
+        ports:
+        - name: web
+          containerPort: 8080
+        - name: admin
+          containerPort: 9090
+        resources:
+          requests:
+            cpu: 25m
+            memory: 48Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          periodSeconds: 2
+          failureThreshold: 3
+      readinessGates:
+      - conditionType: exorcise.io/seal-certified
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spectral-canary
+  namespace: cursed-endpoints
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spectral-backend
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: spectral-backend
+        track: canary
+      annotations:
+        exorcise.io/sealed: 'false'
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: backend
+        image: ghcr.io/cloudnativelima/kubectl-exorcise-2026:v1
+        imagePullPolicy: IfNotPresent
+        args:
+        - cursed-endpoints
+        env:
+        - name: BACKEND_TRACK
+          value: canary
+        - name: BUSINESS_SEALED
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['exorcise.io/sealed']
+        envFrom:
+        - configMapRef:
+            name: seal-contract
+        - configMapRef:
+            name: seal-legacy-profile
+        ports:
+        - name: web
+          containerPort: 9090
+        - name: admin
+          containerPort: 8080
+        resources:
+          requests:
+            cpu: 25m
+            memory: 48Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        readinessProbe:
+          httpGet:
+            path: /forgotten-ready
+            port: 8080
+          periodSeconds: 2
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cursed-api
+  namespace: cursed-endpoints
+spec:
+  type: ClusterIP
+  selector:
+    app: spectral-backend
+  ports:
+  - name: http
+    port: 80
+    targetPort: web
+  publishNotReadyAddresses: true
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: endpoint-watcher
+  namespace: cursed-endpoints
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: endpoint-inspector
+  namespace: cursed-endpoints
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - services
+  resourceNames:
+  - cursed-api
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - configmaps
+  resourceNames:
+  - seal-contract
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  verbs:
+  - list
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  resourceNames:
+  - spectral-stable
+  - spectral-canary
+  - endpoint-watcher
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - services
+  resourceNames:
+  - cursed-api
+  - spectral-stable-check
+  - spectral-canary-check
+  verbs:
+  - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: endpoint-inspector
+  namespace: cursed-endpoints
+subjects:
+- kind: ServiceAccount
+  name: endpoint-watcher
+  namespace: cursed-endpoints
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: endpoint-inspector
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: endpoint-watcher
+  namespace: cursed-endpoints
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: endpoint-watcher
+  template:
+    metadata:
+      labels:
+        app: endpoint-watcher
+    spec:
+      serviceAccountName: endpoint-watcher
+      containers:
+      - name: endpoint-watcher
+        image: ghcr.io/cloudnativelima/kubectl-exorcise-2026:v1
+        imagePullPolicy: IfNotPresent
+        args:
+        - endpoint-watcher
+        ports:
+        - name: health
+          containerPort: 8081
+        resources:
+          requests:
+            cpu: 25m
+            memory: 48Mi
+          limits:
+            cpu: 150m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spectral-stable-check
+  namespace: cursed-endpoints
+spec:
+  type: ClusterIP
+  selector:
+    app: spectral-backend
+    track: stable
+  ports:
+  - name: http
+    port: 80
+    targetPort: web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spectral-canary-check
+  namespace: cursed-endpoints
+spec:
+  type: ClusterIP
+  selector:
+    app: spectral-backend
+    track: canary
+  ports:
+  - name: http
+    port: 80
+    targetPort: web
