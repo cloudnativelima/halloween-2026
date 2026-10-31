@@ -1,0 +1,5 @@
+**
+Containerfile
+!go.mod
+!main.go
+!decode.go
